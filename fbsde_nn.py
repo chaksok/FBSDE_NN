@@ -22,6 +22,8 @@ device = 'cuda' if torch.cuda.is_available() else 'cpu'
 print('Using {} device'.format(device))
 
 
+## This is a change
+
 # In[3]:
 
 
@@ -278,7 +280,7 @@ class FBSDNN(ABC):
         return Y_star_path,Y_real
 
 
-
+## Example 1
 class toy_example1(FBSDNN):
     def __init__(self, Xi, T, M, N, D, layers, learning_rate, r, sigma):
         super().__init__(Xi, T, M, N, D, layers, learning_rate)
