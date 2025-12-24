@@ -90,6 +90,8 @@ Y_pred, Y_exact = model.predict(
     K=1000
 )
 ```
+The method returns the neural network approximation and the corresponding reference solution (analytical or Monte Carlo).
+
 
 ## Toy Examples
 
