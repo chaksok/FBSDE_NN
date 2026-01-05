@@ -72,15 +72,12 @@ class MyNN(nn.Module):
 
 
 
-# In[21]:
-
 
 # Define a custom dataset class
 class FBSDataSet(Dataset):
-    def __init__(self, t, W, Xi):
+    def __init__(self, t, W):
         self.t = t
         self.W = W
-        self.Xi = Xi
 
     def __len__(self):
         return len(self.t)
@@ -216,7 +213,7 @@ class FBSDNN(ABC):
         
 
         t_total, W_total = self.gen_data(self.M * NIter, self.N, self.D, self.T)
-        dataset = FBSDataSet(t_total, W_total, self.Xi)
+        dataset = FBSDataSet(t_total, W_total)
         dataloader = DataLoader(dataset, batch_size=self.M, shuffle=True)
 
         for epoch in range(epochs):
