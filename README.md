@@ -1,4 +1,4 @@
-# FBSDNN: Solving Forward–Backward SDEs with Deep Neural Networks
+# FBSDENN: Solving Forward–Backward SDEs with Deep Neural Networks
 
 This repository implements a PyTorch-based framework for solving Forward–Backward Stochastic Differential Equations (FBSDEs) using deep neural networks and Monte Carlo simulation. The method targets high-dimensional problems where classical PDE solvers become computationally infeasible.
 
