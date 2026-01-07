@@ -1,7 +1,7 @@
 """
 radner_terminal_dl.py
 
-Module for learning Radner equilibria with neural networks.
+Module for learning Radner equilibria with neural networks using the defination of the Radner equilibrium directly.
 
 Contains:
 - SimpleNet: small fully-connected Tanh network with orthogonal initialization.
