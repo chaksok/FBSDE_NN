@@ -37,7 +37,7 @@ class FBSDEBase(ABC):
         self.K = config['K']
         self.learning_rate = config['learning_rate']
         self.device = config.get('device', 'cpu')
-        self.checkpoint_path = config.get('checkpoint_path', 'best_model.pt')
+        self.checkpoint_path = config.get('checkpoint_path', '/Users/sokchak/Desktop/FBSDE_NN/radner_equilibrium_solver/radner_equilibrium_terminal_dl/radner_solver_terminal/best_model.pt')
 
         
         # Validation data
