@@ -144,9 +144,9 @@ class RadnerEquilibriumSolver:
 
         self.S_net = SimpleNet(1 + D, 1, hidden=128, depth=3).to(self.device)
         
-        # θ_nets: (t, W, S) -> θ^i_t  (strategies depend on current price)
+        # θ_nets: (t, S) -> θ^i_t  (strategies depend on current price)
         self.theta_nets = nn.ModuleList([
-            SimpleNet(1 + D + 1, 1, hidden=64, depth=2).to(self.device)
+            SimpleNet(1 + 1, 1, hidden=64, depth=2).to(self.device)
             for _ in range(I)
         ])
     
@@ -203,6 +203,24 @@ class RadnerEquilibriumSolver:
         S_analytical = (t.squeeze(-1) - 1.0) * coeff + (W @ self.B[0])
         return S_analytical
     
+    def get_analytical_theta(self):
+        """
+        Analytical Radner equilibrium strategies.
+        Returns:
+            Tensor of shape (I,) : theta^i
+        """
+        b0 = self.B[0]                 # (D,)
+        b_agents = self.B[1:1+self.I]  # (I, D)
+
+        # numerator common term
+        sum_b = b0 + (self.alpha.unsqueeze(1) * b_agents).sum(0)
+        common = torch.dot(sum_b, b0)
+
+        denom = torch.dot(b0, b0)
+
+        theta = (common - torch.mv(b_agents, b0)) / denom
+        return theta  # (I,)
+    
     def forward(self, t, W):
         """
         Compute learned price paths and agent strategies for given states.
@@ -232,10 +250,9 @@ class RadnerEquilibriumSolver:
         thetas = []
         for n in range(N1 - 1):  # only need strategies for N time steps
             t_n = t[:, n, :]
-            W_n = W[:, n, :]
             S_n = S_learned[:, n].unsqueeze(-1)  # (M, 1)
             
-            x = torch.cat([t_n, W_n, S_n], dim=1)  # (M, 1+D+1)
+            x = torch.cat([t_n, S_n], dim=1)  # (M, 1+D+1)
             
             theta_n = []
             for i, net in enumerate(self.theta_nets):
@@ -325,7 +342,7 @@ class RadnerEquilibriumSolver:
         # ===== Total loss =====
         loss = (
             util_loss
-            + 200.0 * sm_constraint_loss     # ⭐ core term
+            + 1000.0 * sm_constraint_loss     # ⭐ core term
             + 500.0 * clear_loss
             + 200.0 * terminal_loss
             + 200.0  * S0_loss      # ⭐ added
@@ -412,6 +429,8 @@ class RadnerEquilibriumSolver:
         
         # compute loss
         losses = self.compute_loss(t, W, S_learned, thetas)
+
+        theta_star = self.get_analytical_theta()
         
         # price comparison stats
         price_diff = S_learned - S_analytical
@@ -450,7 +469,7 @@ class RadnerEquilibriumSolver:
         
         # strategy statistics
         print("\n[Strategy statistics]")
-        theoretical = 1.0 / self.alpha.cpu()
+        theoretical = theta_star
         for i in range(self.I):
             mean_theta = thetas[i].mean().item()
             std_theta = thetas[i].std().item()
@@ -469,7 +488,7 @@ class RadnerEquilibriumSolver:
             'mse_price': mse_price
         }
     
-    def plot_results(self, results=None):
+    def plot_results(self, results = None, save_path = None):
         """Plot training history and price/strategy comparisons.
 
         If results is None, evaluate(M=1000) is called to produce a results dict.
@@ -490,24 +509,27 @@ class RadnerEquilibriumSolver:
         ax1.set_yscale('log')
         ax1.grid(True)
         
-        # 4. Price paths comparison - multiple paths
-        ax4 = fig.add_subplot(gs[1, 0])
+        # 2. Price paths comparison - multiple paths
+        ax2 = fig.add_subplot(gs[1, 0])
         S_learned = results['S_learned']
         S_analytical = results['S_analytical']
         t = results['t'][0, :, 0].numpy()
         
         num_paths = min(5, S_learned.shape[0])
         for i in range(num_paths):
-            ax4.plot(t, S_learned[i], '-', alpha=0.7, linewidth=2, label=f'Learned {i+1}')
-            ax4.plot(t, S_analytical[i], '--', alpha=0.7, linewidth=2, label=f'Analytical {i+1}')
-        ax4.set_title('Price Paths: Learned vs Analytical')
-        ax4.set_xlabel('Time')
-        ax4.set_ylabel('Price')
-        ax4.legend(fontsize=7, ncol=2)
-        ax4.grid(True)
+            ax2.plot(t, S_learned[i], '-', alpha=0.7, linewidth=2, label=f'Learned {i+1}')
+            ax2.plot(t, S_analytical[i], '--', alpha=0.7, linewidth=2, label=f'Analytical {i+1}')
+        ax2.set_title('Price Paths: Learned vs Analytical')
+        ax2.set_xlabel('Time')
+        ax2.set_ylabel('Price')
+        ax2.legend(fontsize=7, ncol=2)
+        ax2.grid(True)
         
         plt.suptitle('Radner Equilibrium: Deep Learning vs Analytical Solution', 
                     fontsize=14, y=0.995)
+        
+        if save_path:
+            plt.savefig(save_path, bbox_inches="tight")
         
         return fig
 
@@ -535,5 +557,6 @@ if __name__ == "__main__":
     results = solver.evaluate(M=1000)
     
     # visualize
-    fig = solver.plot_results(results)
+    fig = solver.plot_results(results, save_path="/Users/sokchak/Desktop/FBSDE_NN/radner_equilibrium_solver/radner_equilibrium_terminal_dl/path.pdf",
+)
     plt.show()
