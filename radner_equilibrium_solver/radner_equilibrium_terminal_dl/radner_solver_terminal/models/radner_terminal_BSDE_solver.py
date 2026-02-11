@@ -101,7 +101,7 @@ class RadnerEquilibriumSolver(FBSDESolver, ABC):
         W0=W[:,0,:].float() #M*D
 
         
-        Y0,Z0=self.net_u(t0,W0)  #M*(I*1), M*(I*D)
+        Y0, Z0=self.net_u(t0,W0)  #M*(I*1), M*(I*D)
         for i in range(I+1):
             Z0[:,i*self.D:(i+1)*self.D]=(Z0[:,i*self.D:(i+1)*self.D].unsqueeze(1)@self.sig(t0,W0)).squeeze()
 
@@ -157,57 +157,140 @@ class RadnerEquilibriumSolver(FBSDESolver, ABC):
         return loss
     
 
-    def train(self, NIter, epoch, patience):
-        """
-        Train the model using DataLoader for batching, with batch size M.
+    def train(self, NIter, epoch, patience, min_delta=1e-6):
 
-        Parameters:
-            NIter (int): number of iterations (steps)
-            epoch (int): number of epochs
-            patience (int): number of epochs to wait for improvement before stopping training
+        start_time = time.perf_counter()
 
-        Returns:
-            None
-        """
-        start_time=time.time()
-        
-        # Variables to track early stopping
         early_stopping_counter = 0
-        
+        best_val_error = float("inf")
+        best_epoch = 0
+
+        stop_training = False
+
         for j in range(epoch):
-            print(f"Epoch {j+1}\n-------------------------------")
+
+            print(f"\nEpoch {j+1}\n-------------------------------")
+
+            # ===== Training loop =====
             for i in range(NIter):
-                t_batch, W_batch = BrownianMotionGenerator.generate(self.M,self.N,self.D,self.T)
-        
-                loss=self.loss_func(t_batch,W_batch)
+
+                t_batch, W_batch = BrownianMotionGenerator.generate(
+                    self.M, self.N, self.D, self.T
+                )
+
+                loss = self.loss_func(t_batch, W_batch)
+
                 self.optimizer.zero_grad()
                 loss.backward()
-        
                 self.optimizer.step()
+
                 self.history['train_loss'].append(loss.item())
+
+                # ===== train error =====
+                with torch.no_grad():
+
+                    Y_path, Y_real, Z_path, Z_real = self.calculate_path(
+                        t_batch, W_batch
+                    )
+
+                    train_err = self.compute_E2(Y_path, Y_real).item()
+
+                self.history['train_error'].append(train_err)
+
+                # Print progress
                 if (i+1) % 200 == 0:
-                    elapsed=time.time() - start_time
-                    print(f"Loss {(i+1)}: {loss.item()}, time: {elapsed}")
-                    
-            val_loss = (self.loss_func(self.t_valid,self.W_valid)).item()
-            print(f"Validation Loss {(j+1)}: {val_loss:.4f}")
-            self.history['valid_error'].append(val_loss)
-            # Early stopping and model checkpointing
-            if val_loss < self.history['best_val_loss']:
-                print(f"val_loss: {val_loss:.4f}, updating best_val_loss from: {self.history['best_val_loss']:.4f}.")
-                self.history['best_val_loss'] = val_loss
-                self.history['best_epoch'] = j
-                torch.save(self.model.state_dict(), self.checkpoint_path)
+
+                    elapsed = time.perf_counter() - start_time
+
+                    print(
+                        f"Iter {i+1}/{NIter}, "
+                        f"Loss: {loss.item():.3e}, "
+                        f"Train Error: {train_err:.3e}, "
+                        f"Time: {elapsed:.1f}s"
+                    )
+
+            # ===== Validation =====
+
+            val_loss = self.loss_func(self.t_valid, self.W_valid).item()
+
+            with torch.no_grad():
+
+                Y_path, Y_real, Z_path, Z_real = self.calculate_path(
+                    self.t_valid, self.W_valid
+                )
+
+                val_err = self.compute_E2(Y_path, Y_real).item()
+
+            self.history['valid_loss'].append(val_loss)
+            self.history['valid_error'].append(val_err)
+
+            print(
+                f"Validation Loss: {val_loss:.3e}, "
+                f"Validation Error: {val_err:.3e}"
+            )
+
+            # ===== Professional early stopping logic (checkpoint version) =====
+
+            improvement = best_val_error - val_err
+
+            if improvement > min_delta:
+
+                print(
+                    f"Validation error improved "
+                    f"({best_val_error:.3e} → {val_err:.3e}), saving model."
+                )
+
+                best_val_error = val_err
+                best_epoch = j
                 early_stopping_counter = 0
+
+                # keep your original checkpoint method
+                torch.save(self.model.state_dict(), self.checkpoint_path)
+
             else:
-                print(f"val_loss: {val_loss:.4f}, worse than best_val_loss: {self.history['best_val_loss']:.4f}.")
+
                 early_stopping_counter += 1
+
+                print(
+                    f"No improvement for {early_stopping_counter}/{patience} epochs"
+                )
+
                 if early_stopping_counter >= patience:
-                    print(f"Early stopping at epoch {j+1}")
+
+                    print(f"\nEarly stopping triggered at epoch {j+1}")
+
+                    stop_training = True
                     break
-        
-        self.model.load_state_dict(torch.load(self.checkpoint_path, weights_only=True)) ###reload the best model
-    
+
+            if stop_training:
+                break
+
+        # ===== Reload best model =====
+
+        print(f"\nReloading best model from checkpoint...")
+        self.model.load_state_dict(torch.load(self.checkpoint_path))
+
+        print(
+            f"Best validation error: {best_val_error:.3e} "
+            f"(epoch {best_epoch+1})"
+        )
+
+        # ===== Training statistics =====
+
+        end_time = time.perf_counter()
+
+        total_time = end_time - start_time
+        avg_time_per_epoch = total_time / (j+1)
+
+        self.history['train_time'] = total_time
+        self.history['time_per_epoch'] = avg_time_per_epoch
+        self.history['best_val_error'] = best_val_error
+        self.history['best_epoch'] = best_epoch
+
+        print(
+            f"\nTraining completed in {total_time:.1f}s "
+            f"({avg_time_per_epoch:.1f}s per epoch)"
+        )
 
     def predict(self):
         """
@@ -230,8 +313,10 @@ class RadnerEquilibriumSolver(FBSDESolver, ABC):
         
         Y_path = [[] for _ in range(I+1)]
         Y_real = [[] for _ in range(I+1)]
+        Theta_path = [[] for _ in range(I)]  # only agents
+        Theta_real = [[] for _ in range(I)]
         
-        Y0, _ = self.net_u(t0, W0)
+        Y0, Z0 = self.net_u(t0, W0)
         S_0 = self.S_exact(t0, W0)
         Y_real[0].append(S_0)
         
@@ -241,12 +326,20 @@ class RadnerEquilibriumSolver(FBSDESolver, ABC):
         for i in range(1, I+1):
             Y_real[i].append(self.Y_exact(t0, W0, i-1).unsqueeze(1))
         
+        theta_0 = self.theta(Y0, Z0, self.K)
+        for i in range(I):
+            Theta_path[i].append(theta_0[i])
+        
+        for i in range(I):
+            Theta_real[i].append(self.get_analytical_theta()[i])
+        
+        
         for time in range(1, self.N + 1): #iterate from time 1 to time N
             t1=t_star[:,time,:].float() #M*1
             W1=W_star[:,time,:].float() #M*1
             
-            Y1, _ = self.net_u(t1,W1)
-            S_1 = self.S_exact(t1,W1)
+            Y1, Z1 = self.net_u(t1, W1)
+            S_1 = self.S_exact(t1, W1)
                 
             for j in range(I + 1):
                 Y_path[j].append(Y1[:,j].unsqueeze(1))
@@ -256,6 +349,12 @@ class RadnerEquilibriumSolver(FBSDESolver, ABC):
             for i in range(1, I + 1):
                 Y_real[i].append(self.Y_exact(t1, W1, i-1).unsqueeze(1))
             
+            # theta at time t
+            theta_t = self.theta(Y1, Z1, self.K)
+            for i in range(I):
+                Theta_path[i].append(theta_t[i])
+                Theta_real[i].append(self.get_analytical_theta()[i])
+
             Y0, t0, W0 = Y1, t1, W1
         
         for i in range(I + 1):
@@ -264,7 +363,88 @@ class RadnerEquilibriumSolver(FBSDESolver, ABC):
         for i in range(I + 1):
             Y_real[i] = torch.stack(Y_real[i],dim=1)
         
-        return Y_path, Y_real
+        for i in range(I):
+            Theta_path[i] = torch.stack(Theta_path[i], dim=1)
+            Theta_real[i] = torch.stack(Theta_real[i])
+        
+        return Y_path, Y_real, Theta_path, Theta_real
+    
+
+
+    def calculate_path(self, t, W):
+        
+        """
+        Compute the learned price paths and the corresponding agent strategies for the Radner equilibrium.
+
+        Parameters:
+            t (torch.Tensor): time grid of shape (M, N+1, 1)
+            W (torch.Tensor): Brownian motion paths of shape (M, N+1, D)
+
+        Returns:
+            Y_path (torch.Tensor): learned price paths of shape (M, N+1, I+1)
+            Y_real (torch.Tensor): analytical price paths of shape (M, N+1, I+1)
+            Z_path (torch.Tensor): learned agent strategies of shape (M, N, I*D)
+            Z_real (torch.Tensor): analytical agent strategies of shape (M, N, I*D)
+        """
+        I = self.I
+        
+        
+        t0 = t[:,0,:].float() #K*1 initial time
+        W0 = W[:,0,:].float() #K*D
+        
+        
+        Y_path = []
+        Y_real = [[] for _ in range(I+1)]
+        Z_path = []   # <-- NEW
+        
+        
+        Y0, _ = self.net_u(t0, W0)
+        S_0 = self.S_exact(t0, W0)
+        Y_real[0].append(S_0)
+        
+        Y_path.append(Y0)
+            
+        for i in range(1, I+1):
+            Y_real[i].append(self.Y_exact(t0, W0, i-1))
+        
+        
+        for time in range(1, self.N + 1): #iterate from time 1 to time N
+            t1=t[:,time,:].float() #M*1
+            W1=W[:,time,:].float() #M*1
+            
+            Y1, Z1 = self.net_u(t1, W1)
+            S_1 = self.S_exact(t1, W1)
+                
+            Y_path.append(Y1)
+            
+            Y_real[0].append(S_1)
+            
+            for i in range(1, I + 1):
+                Y_real[i].append(self.Y_exact(t1, W1, i-1))
+            
+            # ---- store Z (already flattened) ----
+            Z_path.append(Z1)   # ===== THIS IS IT =====
+
+            Y0, t0, W0 = Y1, t1, W1
+        
+        
+        Y_path = torch.stack(Y_path, dim=1)
+        
+        for i in range(I + 1):
+            Y_real[i] = torch.stack(Y_real[i],dim=1)
+        
+        Y_real = torch.cat(Y_real, dim=2)  # (M, N+1, I+1)
+        Z_path = torch.stack(Z_path, dim=1) # (M, N, I*D)
+        
+
+        # sigD: (1, 4), sigE: (3, 4)
+        sigma = torch.cat([self.sigD, self.sigE], dim=0)        # (4, 4)
+        sigma_flat = sigma.reshape(-1)                # (16,)
+
+        Z_real = sigma_flat.view(1, 1, -1).repeat(Z_path.shape[0], Z_path.shape[1], 1)
+        # Z_real.shape = (M, N, 16)
+
+        return Y_path, Y_real, Z_path, Z_real
     
 
 
@@ -407,7 +587,7 @@ class RadnerNeuralNetwork3(RadnerEquilibriumSolver):
         return y, z
     
 
-    def loss_func(self,t,W,M): #Xi is the initial X at time 0
+    def loss_func(self,t,W): #Xi is the initial X at time 0
         """
         Compute the loss using Forward-Backward SDE structure.
 
@@ -617,7 +797,7 @@ class RadnerNeuralNetwork4(FBSDESolver):
         return loss
     
    
-    def train(self,NIter,epoch,learning_rate,patience):
+    def train(self,NIter,epoch,patience):
         """
         Train the model for a specified number of epochs.
 
@@ -632,7 +812,7 @@ class RadnerNeuralNetwork4(FBSDESolver):
             - Validation loss is computed after each epoch.
             - Early stopping and model checkpointing are used to save the best model.
         """
-        start_time = time.time()
+        start_time = time.perf_counter()
         
         # Variables to track early stopping
         early_stopping_counter = 0
@@ -648,17 +828,39 @@ class RadnerNeuralNetwork4(FBSDESolver):
         
                 self.optimizer.step()
                 self.history['train_loss'].append(loss.item())
+
+                # ===== train error =====
+                with torch.no_grad():
+                    Y_path, Y_real, Z_path, Z_real = self.calculate_path(t_batch, W_batch)
+                    
+                    train_err = self.compute_total_error(Y_path, Y_real, Z_path, Z_real).item()
+
+                self.history['train_error'].append(train_err)
+
+
+                # Print loss
                 if (i+1) % 200 == 0:
-                    elapsed=time.time() - start_time
+                    elapsed=time.perf_counter() - start_time
                     print(f"Loss {(i+1)}: {loss.item()}, time: {elapsed}")
                     
-            val_loss = (self.loss_func(self.t_valid,self.W_valid)).item()
+            # ===== validation =====
+            val_loss = self.loss_func(self.t_valid, self.W_valid).item()
+
+            with torch.no_grad():
+                Y_path, Y_real, Z_path, Z_real = self.calculate_path(self.t_valid, self.W_valid)
+                
+                val_err = self.compute_total_error(Y_path, Y_real, Z_path, Z_real).item()
+
+    
+
             print(f"Validation Loss {(j+1)}: {val_loss:.4f}")
-            self.history['valid_error'].append(val_loss)
+            self.history['valid_loss'].append(val_loss)
+            self.history['valid_error'].append(val_err)
+
             # Early stopping and model checkpointing
-            if val_loss < self.history['best_val_loss']:
-                print(f"val_loss: {val_loss:.4f}, updating best_val_loss from: {self.history['best_val_loss']:.4f}.")
-                self.history['best_val_loss'] = val_loss
+            if val_err < self.history['best_val_error']:
+                print(f"val_loss: {val_loss:.4f}, updating best_val_error from: {self.history['best_val_error']:.4f}.")
+                self.history['best_val_error'] = val_err
                 self.history['best_epoch'] = j
                 torch.save({
                     "model_z": self.model_z.state_dict(),
@@ -666,12 +868,21 @@ class RadnerNeuralNetwork4(FBSDESolver):
                 }, self.checkpoint_path)
                 early_stopping_counter = 0
             else:
-                print(f"val_loss: {val_loss:.4f}, worse than best_val_loss: {self.history['best_val_loss']:.4f}.")
+                print(f"val_loss: {val_loss:.4f}, worse than best_val_error: {self.history['best_val_error']:.4f}.")
                 early_stopping_counter += 1
                 if early_stopping_counter >= patience:
                     print(f"Early stopping at epoch {j+1}")
                     break
         
+        end_time = time.perf_counter()
+        total_time = end_time - start_time
+        avg_time_per_step = total_time / j
+
+        self.history['train_time'] = total_time
+        self.history['time_per_epoch'] = avg_time_per_step
+
+        
+
         ckpt = torch.load(self.checkpoint_path, map_location = self.device)
         # self.model.load_state_dict(torch.load(PATH)) ###reload the best model
         self.model_z.load_state_dict(ckpt["model_z"])
@@ -696,6 +907,9 @@ class RadnerNeuralNetwork4(FBSDESolver):
         
         Y_path = [[] for _ in range(I+1)]
         Y_real = [[] for _ in range(I+1)]
+        Theta_path = [[] for _ in range(I)]  # only agents
+        Theta_real = [[] for _ in range(I)]
+        
         
         
         Z0 = self.net_z(t0, W0)
@@ -708,6 +922,14 @@ class RadnerNeuralNetwork4(FBSDESolver):
             
         for i in range(1,I+1):
             Y_real[i].append(self.Y_exact(t0, W0, i-1).unsqueeze(1))
+        
+        theta_0 = self.theta(Y0, Z0, self.K)
+        for i in range(I):
+            Theta_path[i].append(theta_0[i])
+        
+        for i in range(I):
+            Theta_real[i].append(self.get_analytical_theta()[i])
+        
         
         for time in range(1, self.N + 1): #iterate from time 1 to time N
             t1=t_star[:,time,:].float() #M*1
@@ -734,6 +956,13 @@ class RadnerNeuralNetwork4(FBSDESolver):
             for i in range(1,I+1):
                 Y_real[i].append(self.Y_exact(t1,W1,i-1).unsqueeze(1))
             
+            # theta at time t
+            theta_t = self.theta(Y1, Z1, self.K)
+            for i in range(I):
+                Theta_path[i].append(theta_t[i])
+                Theta_real[i].append(self.get_analytical_theta()[i])
+
+            
             Y0, Z0, t0, W0 = Y1, Z1, t1, W1
                
         
@@ -743,7 +972,105 @@ class RadnerNeuralNetwork4(FBSDESolver):
         for i in range(I+1):
             Y_real[i]=torch.stack(Y_real[i],dim=1)
         
+        for i in range(I):
+            Theta_path[i] = torch.stack(Theta_path[i], dim=1)
+            Theta_real[i] = torch.stack(Theta_real[i])
         
-        return Y_path, Y_real
+        
+        return Y_path, Y_real, Theta_path, Theta_real
+    
+
+
+    def calculate_path(self, t, W):
+        """
+        Compute the predicted terminal state given the dividend process W using the trained model.
+
+        Parameters:
+            t (torch.Tensor): Time of shape (M, N+1)
+            W (torch.Tensor): Dividend process of shape (M, N+1, D)
+
+        Returns:
+            Y_path (list of torch.Tensor): Predicted terminal state
+            Y_real (list of torch.Tensor): Real terminal state
+            Theta_path (list of torch.Tensor): Predicted theta at each time step
+            Theta_real (list of torch.Tensor): Real theta at each time step
+        """
+        I=self.I
+        
+        
+        
+        t0 = t[:,0,:].float() #K*1 initial time
+        W0 = W[:,0,:].float() #K*D
+        
+        
+
+        Y_path = []
+        Y_real = [[] for _ in range(I+1)]
+        Z_path = []  
+        
+        
+        
+        Z0 = self.net_z(t0, W0)
+        Y0 = self.net_y(t0, W0)
+        S_0 = self.S_exact(t0, W0) 
+        Y_real[0].append(S_0)
+
+        Y_path.append(Y0)
+        
+            
+        for i in range(1,I+1):
+            Y_real[i].append(self.Y_exact(t0, W0, i-1))
+        
+        
+        
+        for time in range(1, self.N + 1): #iterate from time 1 to time N
+            t1=t[:,time,:].float() #M*1
+            W1=W[:,time,:].float() #M*1
+            Z1 = self.net_z(t1,W1)
+
+            Y1_temp=[]
+            Y0_1_pred = Y0[:,0].unsqueeze(1) + self.phi0(t0,W0,Z0,self.epsilon)*(t1-t0)+torch.sum(Z0[:,:self.D]*(W1-W0),1,keepdims=True)
+            Y1_temp.append(Y0_1_pred)
+            for j in range(1, I + 1):
+                pred=Y0[:,j].unsqueeze(1)+self.phi(t0,W0,Z0,j,self.epsilon)*(t1-t0)+torch.sum(Z0[:,j*self.D:(j+1)*self.D]*(W1-W0),1,keepdims=True)
+                Y1_temp.append(pred)
+            
+        
+            Y1=torch.cat(Y1_temp,1)  #M*(I+2)
+            
+            S_1=self.S_exact(t1,W1)
+                
+            Y_path.append(Y1)
+            Z_path.append(Z1)   # ===== THIS IS IT =====
+
+
+            Y_real[0].append(S_1)
+            
+            for i in range(1,I+1):
+                Y_real[i].append(self.Y_exact(t1,W1,i-1))
+            
+            
+            Y0, Z0, t0, W0 = Y1, Z1, t1, W1
+               
+        
+        Y_path = torch.stack(Y_path, dim=1)
+        
+        
+        for i in range(I+1):
+            Y_real[i]=torch.stack(Y_real[i], dim=1)
+        
+        Y_real = torch.cat(Y_real, dim=2)  # (M, N+1, I+1)
+        Z_path = torch.stack(Z_path, dim=1) # (M, N, I*D)
+        
+
+        # sigD: (1, 4), sigE: (3, 4)
+        sigma = torch.cat([self.sigD, self.sigE], dim=0)        # (4, 4)
+        sigma_flat = sigma.reshape(-1)                # (16,)
+
+        Z_real = sigma_flat.view(1, 1, -1).repeat(Z_path.shape[0], Z_path.shape[1], 1)
+        # Z_real.shape = (M, N, 16)
+
+        return Y_path, Y_real, Z_path, Z_real
+    
 
     

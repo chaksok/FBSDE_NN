@@ -47,9 +47,11 @@ class FBSDEBase(ABC):
 
         self.history = {
             'train_loss': [],
+            'valid_loss': [],
+            'train_error': [],
             'valid_error': [],
             'best_epoch': 0,
-            'best_val_loss': float('inf')
+            'best_val_error': float('inf')
         }
 
     
@@ -107,7 +109,7 @@ class FBSDEBase(ABC):
         Returns:
             torch.Tensor: drift term of shape (M, D)
         """
-        pass
+        return torch.zeros(X.shape).to(self.device)
     
     
     @abstractmethod
@@ -444,4 +446,90 @@ class FBSDESolver(FBSDEBase, ABC):
         return (t-1) * a + torch.sum(self.sigE[i,:] * X, -1, keepdims = True)
     
 
+    def get_analytical_theta(self):
+        """
+        Analytical Radner equilibrium strategies.
+        Returns:
+            Tensor of shape (I,) : theta^i
+        """
+        b0 = self.sigD.squeeze(0)                # (D,)
+        b_agents = self.sigE # (I, D)
+
+        # numerator common term
+        sum_b = b0 + (self.alpha.unsqueeze(1) * b_agents).sum(0)
+        common = torch.dot(sum_b, b0)
+
+        denom = torch.dot(b0, b0)
+
+        theta = (common - torch.mv(b_agents, b0)) / denom
+        return theta  # (I,)
     
+
+    
+
+    def compute_E2(self, Y_path, Y_real):
+        """
+        Compute E_2(U)
+
+        Parameters
+        ----------
+        Y_path : torch.Tensor
+            shape (M, N+1, I+1)
+        Y_real : torch.Tensor
+            shape (M, N+1, I+1)
+
+        Returns
+        -------
+        E2 : torch.Tensor (scalar)
+        """
+
+        # squared error
+        err = (Y_path - Y_real) ** 2   # (M, N+1, I+1)
+
+        # sup over time (discrete max)
+        err_time_sup = err.max(dim=1).values  # (M, I+1)
+
+        # expectation (Monte Carlo mean)
+        err_mean = err_time_sup.mean(dim=0)  # (I+1,)
+
+        # max over components
+        E2 = err_mean.max()
+
+        return E2
+    
+
+    def compute_D2(self, Z_path, Z_real):
+        """
+        Compute D_2(U)
+
+        Parameters
+        ----------
+        Z_path : torch.Tensor
+            shape (M, N, I*D)
+        Z_real : torch.Tensor
+            shape (M, N, I*D)
+        h : float
+            time step size
+
+        Returns
+        -------
+        D2 : torch.Tensor (scalar)
+        """
+
+        N = Z_path.shape[1]
+        # squared norm in R^{I*D}
+        diff = Z_path - Z_real                     # (M, N, I*D)
+        sq_norm = diff.pow(2).sum(dim=2)           # (M, N)
+
+        # time integral
+        time_integral = 1/N * sq_norm.sum(dim=1)     # (M,)
+
+        # expectation
+        D2 = time_integral.mean()
+
+        return D2
+    
+    def compute_total_error(self, Y_path, Y_real, Z_path, Z_real):
+        E2 = self.compute_E2(Y_path, Y_real)
+        D2 = self.compute_D2(Z_path, Z_real)
+        return E2 + D2
