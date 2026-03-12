@@ -671,6 +671,7 @@ class RadnerEquilibriumSolver4(TerminalSolver):
         super().__init__(config)    
         self.layers_z = config['layers_z']   
         self.layers_y = config['layers_y']
+        
 
         # Neural network and optimizer
         self.model_z = myNN(self.layers_z).to(self.device)
@@ -683,6 +684,7 @@ class RadnerEquilibriumSolver4(TerminalSolver):
         )
 
         # Test data for prediction
+
         self.t_star,self.W_star = BrownianMotionGenerator.generate(self.K, self.N, self.D, self.T)
     
     
@@ -858,11 +860,15 @@ class RadnerEquilibriumSolver4(TerminalSolver):
         
         # Variables to track early stopping
         early_stopping_counter = 0
-        
+    
         for j in range(epoch):
             print(f"Epoch {j+1}\n-------------------------------")
             for i in range(NIter):
-                t_batch, W_batch = BrownianMotionGenerator.generate(self.M,self.N,self.D,self.T)
+                start = i * self.M
+                end = (i + 1) * self.M
+
+                t_batch, W_batch = self.t_train[start:end], self.W_train[start:end]
+
         
                 loss=self.loss_func(t_batch,W_batch)
 
