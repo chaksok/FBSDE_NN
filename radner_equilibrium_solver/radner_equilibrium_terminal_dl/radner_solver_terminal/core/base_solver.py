@@ -39,7 +39,9 @@ class FBSDEBase(ABC):
         self.device = config.get('device', 'cpu')
         self.checkpoint_path = config.get('checkpoint_path', '/Users/sokchak/Desktop/FBSDE_NN/radner_equilibrium_solver/radner_equilibrium_terminal_dl/radner_solver_terminal/best_model.pt')
 
-        
+        self.t_train, self.W_train = config['t_train'], config['W_train']
+        # Validation data
+        # self.t_valid, self.W_valid = config['t_valid'], config['W_valid']
         # Validation data
         self.t_valid, self.W_valid = BrownianMotionGenerator.generate(
             self.K, self.N, self.D, self.T, self.device
@@ -50,8 +52,9 @@ class FBSDEBase(ABC):
             'valid_loss': [],
             'train_error': [],
             'valid_error': [],
+            'Y0_error': [],
             'best_epoch': 0,
-            'best_val_error': float('inf')
+            'best_val_loss': float('inf')
         }
 
     
@@ -465,6 +468,18 @@ class FBSDESolver(FBSDEBase, ABC):
         return theta  # (I,)
     
 
+    def compute_Y0_error_tensor(self, Y_path, Y_real):
+
+        diff = Y_path[:,0,:] - Y_real[:,0,:]
+
+        return torch.mean(diff**2)
+
+
+    def compute_path_L2_error_tensor(self, Y_path, Y_real):
+
+        diff = Y_path - Y_real
+
+        return torch.mean(diff**2)
     
 
     def compute_E2(self, Y_path, Y_real):

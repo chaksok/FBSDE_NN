@@ -80,7 +80,7 @@ def plot_training_loss_and_error(history, save_path=None):
 
 def plot_loss_decay_MN(loss_records, save_path=None):
 
-    fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+    fig, axes = plt.subplots(1, 3, figsize=(16, 5))
 
     # ======================
     # Left: training loss
@@ -101,10 +101,10 @@ def plot_loss_decay_MN(loss_records, save_path=None):
     axes[0].legend()
 
     # ======================
-    # Right: training error
+    # middle: validation L2 error
     # ======================
     for (M_, N_), hist in loss_records.items():
-        error = np.array(hist['train_error'])
+        error = np.array(hist['valid_error'])
         axes[1].plot(
             error,
             linewidth=2,
@@ -113,10 +113,29 @@ def plot_loss_decay_MN(loss_records, save_path=None):
 
     axes[1].set_yscale("log")
     axes[1].set_xlabel("Iteration")
-    axes[1].set_ylabel("Training error (log scale)")
-    axes[1].set_title("Error decay for different $(M,N)$")
+    axes[1].set_ylabel("Validation error (log scale)")
+    axes[1].set_title("L2 Error decay for different $(M,N)$")
     axes[1].grid(alpha=0.3)
     axes[1].legend()
+
+
+    # ======================
+    # middle: Validation Y0 error
+    # ======================
+    for (M_, N_), hist in loss_records.items():
+        error = np.array(hist['Y0_error'])
+        axes[2].plot(
+            error,
+            linewidth=2,
+            label=f"M={M_}, N={N_}",
+        )
+
+    axes[2].set_yscale("log")
+    axes[2].set_xlabel("Iteration")
+    axes[2].set_ylabel("Validation error (log scale)")
+    axes[2].set_title("Y0 Error decay for different $(M,N)$")
+    axes[2].grid(alpha=0.3)
+    axes[2].legend()
 
     plt.tight_layout()
 
